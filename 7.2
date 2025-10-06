@@ -1,0 +1,16 @@
+CREATE TABLE Students (
+    StudentID INT AUTO_INCREMENT PRIMARY KEY,
+    FirstName VARCHAR(50),
+    LastName VARCHAR(50),
+    Age INT,
+    Email VARCHAR(100)
+);
+INSERT INTO Students (FirstName, LastName, Age, Email)
+VALUES 
+('Amit', 'Sharma', 20, 'amit.sharma@example.com'),
+('Priya', 'Verma', 22, 'priya.verma@example.com'),
+('Rahul', 'Singh', 21, 'rahul.singh@example.com');
+UPDATE Students
+SET Age = 23, Email = 'priya.verma23@example.com'
+WHERE FirstName = 'Priya' AND LastName = 'Verma';
+SELECT * FROM Students;
