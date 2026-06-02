@@ -1,0 +1,201 @@
+import re
+import nltk
+import pandas as pd
+
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+from rapidfuzz import fuzz
+stop_words = set(stopwords.words("english"))
+
+def preprocess_text(text):
+    
+    Normalize text:
+    - lowercase
+    - remove punctuation
+    - remove stopwords
+    
+
+    text = text.lower()
+
+    text = re.sub(r"[^a-zA-Z0-9\s]", "", text)
+
+    tokens = word_tokenize(text)
+
+    tokens = [word for word in tokens if word not in stop_words]
+
+    return " ".join(tokens)
+
+
+
+def generate_ngrams(text, n=3):
+    words = text.split()
+
+    return set(
+        zip(*[words[i:] for i in range(n)])
+    )
+
+
+def ngram_similarity(text1, text2, n=3):
+
+    ng1 = generate_ngrams(text1, n)
+    ng2 = generate_ngrams(text2, n)
+
+    if len(ng1) == 0 or len(ng2) == 0:
+        return 0
+
+    intersection = len(ng1.intersection(ng2))
+    union = len(ng1.union(ng2))
+
+    return intersection / union
+
+
+
+
+def tfidf_similarity(texts):
+
+    vectorizer = TfidfVectorizer()
+
+    tfidf_matrix = vectorizer.fit_transform(texts)
+
+    similarity_matrix = cosine_similarity(tfidf_matrix)
+
+    return similarity_matrix
+
+
+
+def fuzzy_similarity(text1, text2):
+
+    return fuzz.ratio(text1, text2) / 100.0
+
+
+
+
+def combined_similarity(text1, text2):
+
+    p1 = preprocess_text(text1)
+    p2 = preprocess_text(text2)
+
+    cosine_score = tfidf_similarity([p1, p2])[0][1]
+
+    fuzzy_score = fuzzy_similarity(p1, p2)
+
+    ngram_score = ngram_similarity(p1, p2)
+
+    final_score = (
+        0.5 * cosine_score +
+        0.3 * fuzzy_score +
+        0.2 * ngram_score
+    )
+
+    return {
+        "cosine": round(cosine_score, 4),
+        "fuzzy": round(fuzzy_score, 4),
+        "ngram": round(ngram_score, 4),
+        "final": round(final_score, 4)
+    }
+
+
+
+def detect_plagiarism(documents,
+                      threshold=0.70):
+
+    results = []
+
+    n = len(documents)
+
+    for i in range(n):
+
+        for j in range(i + 1, n):
+
+            scores = combined_similarity(
+                documents[i],
+                documents[j]
+            )
+
+            plagiarized = scores["final"] >= threshold
+
+            results.append({
+                "Doc1": i,
+                "Doc2": j,
+                "Cosine": scores["cosine"],
+                "Fuzzy": scores["fuzzy"],
+                "Ngram": scores["ngram"],
+                "FinalScore": scores["final"],
+                "Plagiarism": plagiarized
+            })
+
+    return pd.DataFrame(results)
+
+
+
+
+def generate_report(df):
+
+    print("\n========== PLAGIARISM REPORT ==========\n")
+
+    if len(df) == 0:
+        print("No comparisons found.")
+        return
+
+    suspicious = df[df["Plagiarism"] == True]
+
+    if len(suspicious) == 0:
+        print("No plagiarism detected.")
+        return
+
+    for _, row in suspicious.iterrows():
+
+        print(
+            f"Document {row['Doc1']} "
+            f"vs Document {row['Doc2']}"
+        )
+
+        print(
+            f"Similarity Score: "
+            f"{row['FinalScore']:.2f}"
+        )
+
+        print(
+            f"Cosine={row['Cosine']:.2f}, "
+            f"Fuzzy={row['Fuzzy']:.2f}, "
+            f"Ngram={row['Ngram']:.2f}"
+        )
+
+        print("-" * 40)
+
+
+
+if __name__ == "__main__":
+
+    documents = [
+
+        """
+        Artificial Intelligence is transforming
+        industries by automating repetitive tasks
+        and enabling data-driven decisions.
+        """,
+
+        """
+        AI is transforming industries through
+        automation of repetitive tasks and
+        helping businesses make data-driven decisions.
+        """,
+
+        """
+        Climate change affects ecosystems,
+        weather patterns and biodiversity.
+        """
+    ]
+
+    report_df = detect_plagiarism(
+        documents,
+        threshold=0.65
+    )
+
+    print(report_df)
+
+    generate_report(report_df)
