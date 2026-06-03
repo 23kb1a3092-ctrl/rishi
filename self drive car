@@ -1,0 +1,352 @@
+
+
+
+import cv2
+import numpy as np
+import math
+
+
+class PIDController:
+    def __init__(self, kp=0.4, ki=0.01, kd=0.2):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+
+        self.prev_error = 0
+        self.integral = 0
+
+    def update(self, error):
+
+        self.integral += error
+        derivative = error - self.prev_error
+
+        output = (
+            self.kp * error
+            + self.ki * self.integral
+            + self.kd * derivative
+        )
+
+        self.prev_error = error
+
+        return output
+
+
+def canny(image):
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    blur = cv2.GaussianBlur(
+        gray,
+        (5, 5),
+        0
+    )
+
+    edges = cv2.Canny(
+        blur,
+        50,
+        150
+    )
+
+    return edges
+
+
+def region_of_interest(image):
+
+    height = image.shape[0]
+
+    polygons = np.array([
+        [
+            (200, height),
+            (1100, height),
+            (650, 250)
+        ]
+    ])
+
+    mask = np.zeros_like(image)
+
+    cv2.fillPoly(
+        mask,
+        polygons,
+        255
+    )
+
+    masked = cv2.bitwise_and(
+        image,
+        mask
+    )
+
+    return masked
+
+
+
+def detect_lines(image):
+
+    lines = cv2.HoughLinesP(
+        image,
+        2,
+        np.pi / 180,
+        threshold=100,
+        minLineLength=40,
+        maxLineGap=5
+    )
+
+    return lines
+
+
+def make_coordinates(image, line_parameters):
+
+    slope, intercept = line_parameters
+
+    y1 = image.shape[0]
+    y2 = int(y1 * 0.6)
+
+    x1 = int((y1 - intercept) / slope)
+    x2 = int((y2 - intercept) / slope)
+
+    return np.array([
+        x1,
+        y1,
+        x2,
+        y2
+    ])
+
+def average_slope_intercept(image, lines):
+
+    left_fit = []
+    right_fit = []
+
+    if lines is None:
+        return None
+
+    for line in lines:
+
+        x1, y1, x2, y2 = line.reshape(4)
+
+        parameters = np.polyfit(
+            (x1, x2),
+            (y1, y2),
+            1
+        )
+
+        slope = parameters[0]
+        intercept = parameters[1]
+
+        if slope < 0:
+            left_fit.append((slope, intercept))
+        else:
+            right_fit.append((slope, intercept))
+
+    lane_lines = []
+
+    if len(left_fit) > 0:
+        left_avg = np.average(
+            left_fit,
+            axis=0
+        )
+
+        lane_lines.append(
+            make_coordinates(
+                image,
+                left_avg
+            )
+        )
+
+    if len(right_fit) > 0:
+        right_avg = np.average(
+            right_fit,
+            axis=0
+        )
+
+        lane_lines.append(
+            make_coordinates(
+                image,
+                right_avg
+            )
+        )
+
+    return lane_lines
+
+
+def draw_lines(image, lines):
+
+    line_image = np.zeros_like(image)
+
+    if lines is not None:
+
+        for line in lines:
+
+            x1, y1, x2, y2 = line
+
+            cv2.line(
+                line_image,
+                (x1, y1),
+                (x2, y2),
+                (0, 255, 0),
+                8
+            )
+
+    return line_image
+
+
+
+def calculate_steering_angle(frame, lane_lines):
+
+    if lane_lines is None:
+        return 90
+
+    height, width, _ = frame.shape
+
+    if len(lane_lines) == 2:
+
+        left_x2 = lane_lines[0][2]
+        right_x2 = lane_lines[1][2]
+
+        lane_center = (left_x2 + right_x2) / 2
+
+    elif len(lane_lines) == 1:
+
+        lane_center = lane_lines[0][2]
+
+    else:
+        lane_center = width / 2
+
+    vehicle_center = width / 2
+
+    offset = lane_center - vehicle_center
+
+    angle_radian = math.atan(
+        offset / (height / 2)
+    )
+
+    angle_degree = int(
+        angle_radian * 180.0 / math.pi
+    )
+
+    steering_angle = angle_degree + 90
+
+    return steering_angle
+
+
+
+def display_heading_line(frame, steering_angle):
+
+    heading_image = np.zeros_like(frame)
+
+    height, width, _ = frame.shape
+
+    steering_angle_radian = (
+        steering_angle / 180.0 * math.pi
+    )
+
+    x1 = int(width / 2)
+    y1 = height
+
+    x2 = int(
+        x1 - height / 2 /
+        math.tan(steering_angle_radian)
+    )
+
+    y2 = int(height / 2)
+
+    cv2.line(
+        heading_image,
+        (x1, y1),
+        (x2, y2),
+        (0, 0, 255),
+        5
+    )
+
+    return cv2.addWeighted(
+        frame,
+        0.8,
+        heading_image,
+        1,
+        1
+    )
+
+
+
+pid = PIDController()
+
+video = cv2.VideoCapture("test_video.mp4")
+
+while video.isOpened():
+
+    success, frame = video.read()
+
+    if not success:
+        break
+
+    frame = cv2.resize(
+        frame,
+        (1280, 720)
+    )
+
+    edges = canny(frame)
+
+    cropped = region_of_interest(edges)
+
+    lines = detect_lines(cropped)
+
+    lane_lines = average_slope_intercept(
+        frame,
+        lines
+    )
+
+    line_image = draw_lines(
+        frame,
+        lane_lines
+    )
+
+    combo = cv2.addWeighted(
+        frame,
+        0.8,
+        line_image,
+        1,
+        1
+    )
+
+    steering_angle = calculate_steering_angle(
+        frame,
+        lane_lines
+    )
+
+    error = steering_angle - 90
+
+    control_signal = pid.update(error)
+
+    combo = display_heading_line(
+        combo,
+        steering_angle
+    )
+
+    cv2.putText(
+        combo,
+        f"Steering Angle: {steering_angle}",
+        (20, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (0, 255, 0),
+        2
+    )
+
+    cv2.putText(
+        combo,
+        f"PID Output: {control_signal:.2f}",
+        (20, 80),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (255, 0, 0),
+        2
+    )
+
+    cv2.imshow(
+        "AI Self Driving Car",
+        combo
+    )
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+video.release()
+cv2.destroyAllWindows()
